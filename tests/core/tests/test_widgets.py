@@ -884,6 +884,19 @@ class ManyToManyWidget(TestCase):
         self.assertIn(self.cat1, cleaned_data)
         self.assertIn(self.cat2, cleaned_data)
 
+    def test_clean_uses_get_queryset(self):
+        class FilteredWidget(widgets.ManyToManyWidget):
+            def get_queryset(self, value, row, *args, **kwargs):
+                return self.model.objects.filter(name=row["category"])
+
+        widget = FilteredWidget(Category)
+        value = f"{self.cat1.pk},{self.cat2.pk}"
+        cleaned_data = widget.clean(
+            value, row={"category": self.cat1.name}, row_number=1
+        )
+
+        self.assertQuerySetEqual(cleaned_data, [self.cat1])
+
     def test_clean_typo(self):
         value = "%s," % self.cat1.pk
         cleaned_data = self.widget.clean(value)
@@ -931,6 +944,14 @@ class JSONWidgetTest(TestCase):
 
     def test_render(self):
         self.assertEqual(self.widget.render(self.value), '{"value": 23}')
+
+    def test_render_sort_json_keys(self):
+        value = {"b": 2, "a": 1}
+
+        self.assertEqual(self.widget.render(value), '{"b": 2, "a": 1}')
+        self.assertEqual(
+            self.widget.render(value, sort_json_keys=True), '{"a": 1, "b": 2}'
+        )
 
     def test_clean_single_quoted_string(self):
         self.assertEqual(self.widget.clean("{'value': 23}"), self.value)

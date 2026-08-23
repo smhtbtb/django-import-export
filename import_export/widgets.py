@@ -484,12 +484,15 @@ class JSONWidget(Widget):
 
     def render(self, value, **kwargs):
         """
+        Set the ``sort_json_keys`` keyword argument to ``True`` to sort the
+        keys in JSON objects.
+
         :return: A JSON formatted string derived from ``value``.
           ``coerce_to_string`` has no effect on the return value.
         """
         if value is None:
             return None
-        return json.dumps(value)
+        return json.dumps(value, sort_keys=kwargs.get("sort_json_keys", False))
 
 
 class ForeignKeyWidget(Widget):
@@ -752,24 +755,13 @@ class CachedForeignKeyWidget(ForeignKeyWidget):
                     else:
                         return {self.field: value, 'inactive': True}
 
-    - It performs lookup on Python side, so the filtering logic
-      with non-text data types may not work::
-
-            class MultiColumnForeignKeyWidget(CachedForeignKeyWidget):
-                def get_lookup_kwargs(self, value, row, **kwargs):
-                    # row['birthday'] is a string like '01-01-2000'.
-                    #
-                    # It won't match the instance because the birthday values
-                    # in the cached instances are datetime objects, not strings.
-                    return {self.field: value, 'birthday': row['birthday']}
-
-    - It does not support complex lookups like ``__gt``, ``__lt``,
-      or filtering over relationships in the ``get_lookup_kwargs()``.
+    - It does not support complex lookups like ``__gt`` or ``__lt`` in the
+    ``get_lookup_kwargs()``.
       For example, the following code won't work::
 
             class BookForeignKeyWidget(CachedForeignKeyWidget):
                 def get_lookup_kwargs(self, value, row, **kwargs):
-                    return {f'{self.field}__author': value}
+                    return {f'{self.field}__gt': value}
 
     :param model: The Model the ForeignKey refers to (required).
     :param field: A field on the related model used for looking up a particular
@@ -823,6 +815,21 @@ class ManyToManyWidget(Widget):
         self.field = field
         super().__init__(**kwargs)
 
+    def get_queryset(self, value, row, *args, **kwargs):
+        """
+        Returns a queryset of all objects for this Model.
+
+        Override this method to limit the pool of objects from which related
+        objects are retrieved.
+
+        :param value: The field's value in the dataset.
+        :param row: The dataset's current row.
+        :param \\*args: Optional args.
+        :param \\**kwargs: Optional kwargs.
+        :return: A QuerySet containing all objects for this model.
+        """
+        return self.model.objects.all()
+
     def clean(self, value, row=None, **kwargs):
         """
         Converts a separated string of values into a QuerySet for ManyToMany
@@ -840,12 +847,13 @@ class ManyToManyWidget(Widget):
         """
         if not value:
             return self.model.objects.none()
+        queryset = self.get_queryset(value, row, **kwargs)
         if isinstance(value, (float, int)):
             ids = [int(value)]
         else:
             ids = value.split(self.separator)
             ids = filter(None, [i.strip() for i in ids])
-        return self.model.objects.filter(**{"%s__in" % self.field: ids})
+        return queryset.filter(**{"%s__in" % self.field: ids})
 
     def render(self, value, **kwargs):
         """
