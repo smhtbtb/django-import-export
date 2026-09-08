@@ -355,3 +355,48 @@ class ImportPreviewPaginationTests(AdminTestMixin, TestCase):
             get_response.context["confirm_form"].initial["import_file_name"],
             post_initial["import_file_name"],
         )
+
+    @override_settings(IMPORT_EXPORT_PREVIEW_PAGE_SIZE=2)
+    def test_custom_import_form_field_survives_pagination(self):
+        # The documented custom-form pattern (docs/admin_integration.rst,
+        # "Customize admin import forms") adds an ``author`` field to the
+        # ImportForm and copies it to the ConfirmImportForm via
+        # ``import_form.cleaned_data["author"]`` in get_confirm_form_initial().
+        # ``CustomBookAdmin`` in tests/core/admin.py is that example.
+        #
+        # The GET pagination handler rebuilds a synthetic ImportForm carrying
+        # only ``format`` and ``resource`` and never cleans it, so any extra
+        # field the admin submitted is lost: the confirm form on page 2+ has
+        # no author, and confirming from that page submits a required field
+        # empty.  The synthetic form should be rebuilt from the full POST data
+        # and cleaned so ``cleaned_data`` is available to subclass hooks.
+        from core.models import Author
+
+        author = Author.objects.create(name="Pagination Author")
+        lines = ["id,name,Email of the author"]
+        for i in range(1, 4):
+            lines.append(f"{i},EBook {i},reader{i}@example.com")
+        csv_text = "\r\n".join(lines) + "\r\n"
+
+        post_response = self.client.post(
+            self.ebook_import_url,
+            {
+                f"{FORM_FIELD_PREFIX}format": "0",
+                "import_file": StringIO(csv_text),
+                "author": author.id,
+            },
+        )
+        self.assertEqual(post_response.status_code, 200)
+        post_initial = post_response.context["confirm_form"].initial
+        self.assertEqual(post_initial["author"], author.id)
+        self.assertEqual(post_response.context["preview_page"].paginator.num_pages, 2)
+
+        params = self._pagination_get_params(post_response, page=2)
+        get_response = self.client.get(self.ebook_import_url, params)
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(get_response.context["preview_page"].number, 2)
+
+        # The confirm form rendered on page 2 must carry the same author the
+        # admin selected on upload, exactly as it does on page 1.
+        get_initial = get_response.context["confirm_form"].initial
+        self.assertEqual(get_initial.get("author"), author.id)
