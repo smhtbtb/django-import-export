@@ -215,19 +215,67 @@ class ImportPreviewPaginationTests(AdminTestMixin, TestCase):
 
     def test_pagination_get_without_session_metadata_renders_blank(self):
         # If the session entry is missing (stale URL, expired session)
-        # the GET pagination handler bails out cleanly.
+        # the GET pagination handler bails out and explains itself rather
+        # than silently re-rendering an empty upload form.
         response = self.client.get(
             self.book_import_url,
             {"import_file_name": "missing.csv", "page": "2"},
         )
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("result", response.context)
+        self.assertIn(
+            "The import preview has expired. Please upload the file again.",
+            [str(m) for m in response.context["messages"]],
+        )
+
+    @override_settings(IMPORT_EXPORT_PREVIEW_PAGE_SIZE=2)
+    def test_pagination_get_with_missing_tmp_file_warns(self):
+        # CacheStorage entries expire, temp folders get swept, and with
+        # TempFolderStorage behind a load balancer the GET can land on a
+        # different host.  The admin must be told, not shown a blank form.
+        post_response = self._post_csv(_build_csv(4))
+        params = self._pagination_get_params(post_response, page=2)
+        # the default TempFolderStorage keeps the upload on disk
+        os.remove(post_response.context["confirm_form"].initial["import_file_name"])
+
+        response = self.client.get(self.book_import_url, params)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("result", response.context)
+        self.assertIn(
+            "The import preview has expired. Please upload the file again.",
+            [str(m) for m in response.context["messages"]],
+        )
+
+    @override_settings(IMPORT_EXPORT_PREVIEW_PAGE_SIZE=None)
+    def test_pagination_can_be_disabled(self):
+        # None restores the pre-v5 behaviour: every preview row on one page
+        # and no navigation links.
+        response = self._post_csv(_build_csv(5))
+        page = response.context["preview_page"]
+        self.assertEqual(page.paginator.num_pages, 1)
+        self.assertEqual(page.paginator.count, 5)
+        self.assertEqual(len(page), 5)
+        self.assertNotContains(response, 'class="paginator"')
+
+    @override_settings(IMPORT_EXPORT_PREVIEW_PAGE_SIZE=100)
+    def test_model_admin_attribute_overrides_setting(self):
+        from core.admin import BookAdmin
+
+        BookAdmin.import_preview_page_size = 2
+        try:
+            response = self._post_csv(_build_csv(5))
+        finally:
+            BookAdmin.import_preview_page_size = None
+
+        page = response.context["preview_page"]
+        self.assertEqual(response.context["preview_page_size"], 2)
+        self.assertEqual(page.paginator.num_pages, 3)
 
     def test_invalid_page_size_raises_improperly_configured(self):
         # A misconfigured page size used to reach Paginator and blow up
         # with ZeroDivisionError / EmptyPage / TypeError part-way through
         # rendering the confirm screen.
-        for bad_value in (0, -1, "abc", None, True):
+        for bad_value in (0, -1, "abc", True):
             with self.subTest(page_size=bad_value):
                 with override_settings(IMPORT_EXPORT_PREVIEW_PAGE_SIZE=bad_value):
                     with self.assertRaises(ImproperlyConfigured):

@@ -146,8 +146,16 @@ attribute.
 
 A positive integer that sets the page size of the admin import preview tables
 (the dry-run preview, the validation-error preview, and the critical-error
-preview). Defaults to ``100``. Any other value (zero, negative, or
-non-integer) raises ``django.core.exceptions.ImproperlyConfigured``.
+preview). Defaults to ``100``.
+
+Set it to ``None`` to disable pagination entirely and render every preview row
+on a single page, which is the behaviour of v4 and earlier. Any other value
+(zero, negative, or non-integer) raises
+``django.core.exceptions.ImproperlyConfigured``.
+
+Can be overridden per ``ModelAdmin`` by setting the
+``import_preview_page_size`` class attribute, or for full control by
+overriding :meth:`~import_export.admin.ImportMixin.get_import_preview_page_size`.
 
 The setting only affects what is rendered on the confirmation screen; the
 dry-run still processes the entire file, and the confirm step still imports
